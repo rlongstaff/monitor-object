@@ -1,0 +1,49 @@
+#!/usr/bin/perl
+
+use warnings;
+use strict;
+
+ use lib qw(
+    lib
+    Modules
+    Modules/Installed
+    /usr/local/nagios/libexec/Applications/Modules
+    /usr/local/nagios/libexec/Applications/Modules/Installed
+    /opt/nagiosagent/libexec/Applications/Modules
+    /opt/nagiosagent/libexec/Applications/Modules/Installed
+);
+
+use Getopt::Long;
+use Monitor::Log::Content;
+
+my $log_filename;
+my $bookmark_filename;
+my $config_filename;
+
+my $result = GetOptions(
+    "log=s"      => \$log_filename,
+    "bookmark=s" => \$bookmark_filename,
+    "config=s"   => \$config_filename,
+);
+
+unless (defined $log_filename && defined $config_filename) {
+    #TODO standard exist sequence
+    Monitor::Log::Content->exit_state('UNKNOWN', "USAGE: $0 -c <config_filename> -l <log_filename> [-b <bookmark_filename]");
+}
+
+#TODO Bookmark files should be optional
+unless ($bookmark_filename) {
+    $bookmark_filename = $log_filename . ".bookmark";
+}
+
+my $monitor = Monitor::Log::Content->new(
+    LogFile      => $log_filename,
+    BookmarkFile => $bookmark_filename,
+    ConfigFile   => $config_filename,
+);
+
+$monitor->run;
+
+$monitor->state('UNKNOWN', "Monitor failed to exit properly");
+$monitor->exit_state;
+

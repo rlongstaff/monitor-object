@@ -1,0 +1,138 @@
+check_log_content
+
+Overview
+check_log_content is a Nagios plugin that scans logs and checks each line of
+the log against a series of user-defined rules. Each rule contains a regular
+expression and a count. The check then uses this information to set the
+specified Nagios state. The check efficiently scans the log by remembering its
+place in the log between executions.
+
+Rules and buckets
+A rule is primarily defined as a regular expression to apply to a log entry.
+This rule may be broken up into several "buckets" that dictate the number of
+times the regex matches during the current run. Each bucket will have Nagios
+state that describes the severity of the alert. The configuration file is a
+Comma Separated Value (CSV) format with 6 fields per line. Each line can be
+thought of as a bucket or a component of a rule. In the case where you have
+only one bucket for a regex, a single line defines the entire rule.
+
+Each bucket is made up of the following parts:
+
+Identifier
+    This is the rule identifier. All buckets with the same identifier make up
+    a single rule.
+
+State
+    This is the Nagios state to apply to the current run. Valid values are:
+    UNKNOWN, OK, WARNING, CRITICAL. The "worst" state is preserved during the
+    run.  Thus, you can have a rule with an OK state match after a WARNING
+    state has been reached. The OK state will simply stop processing further
+    regular expressions for that log entry; the WARNING state will still be
+    reported to Nagios.
+Minimum number of occurrences since last run
+Maximum number of occurrences since last run
+(Reserved)
+    This field is reserved for future use. This is not the field you're
+    looking for...
+Regular expression
+    This regular expression applies to the rule. The check uses perl's regular
+    expression engine. This field is the final field in a configuration line
+    so that no pre-processing has to be performed. You do not have to escape
+    commas to have them pass to the regex engine unmolested.
+
+Note that the identifier and regular expression are what tie the bucket to a
+rule. For this reason, the regex that appears with the first occurrence of an
+identifier is used for all subsequent buckets with that identifier.
+
+The first rule with a matching regex "wins".
+
+Configuration Format
+
+This configuration file is a simple CSV format. No quotes are necessary around
+each field. Only the regex field support commas. Each line must be formatted
+like so:
+
+id,state,min,max,reserved,regex
+
+Examples
+
+Simple error checking
+    mylog.cfg
+        error,WARNING,1,5,,ERROR
+        error,CRITICAL,6,,,ERROR
+
+The above configuration creates a single rule, identified 'error' and checks
+it against the regular expression /ERROR/. If the log being checked has 3 new
+lines (since the last check) containing 'ERROR' the check will return WARNING
+(3 being between 1 and 5). If there are 15 log entries containing 'ERROR' it
+will return CRITICAL (more than 6, unspecified max).
+
+White listing patterns / Short-circuiting rules
+    mylog.cfg
+        no_error,OK,1,,,NO ERROR: all servers reachable
+        error,WARNING,1,5,,ERROR
+        error,CRITICAL,6,,,ERROR
+
+As with the example above any log entries containing 'ERROR' will trigger the
+'error' rule. However, each log entry will be checked against the /NO
+ERROR.../ pattern prior to the /ERROR/ pattern. Because of this the no_error
+rule "wins" and sets the state - for that single log entry only - to OK.
+Subsequent entries that do not match the no_error pattern, but do match the
+error pattern will set the appropriate error state.
+
+Execution
+
+Typically, all execution will be handled by Nagios. You should only be
+executing this by hand during the development of your rules configuration.
+
+USAGE: ./check_log_content -c <config_filename> -l <log_filename> [-b <bookmark_filename]
+
+    -c <config_filename>
+        This is the rule config in CSV format as specified above.
+    -l <log_filename>
+        This is the log file to scan
+    -b <bookmark_filename>
+        This is the file that check_log_content uses to maintain position
+        persistence between executions. Removing this file will cause
+        check_log_content to scan from the beginning from the file. If no
+        bookmark is specified, a new file will be created that is named
+        <log_filename>.bookmark. The directory containing the log file may not
+        always be writeable by the NRPE user; this option allows you to keep
+        one or more of your bookmarks in a well defined directory to which
+        NPRE does have write access.
+
+Nagios Configuration Considerations
+
+    check_log_content displays the current state of the log *SINCE THE LAST
+EXECUTION*. Just because the Nagios service state is 'OK', do not assume that
+the problem has resolved itself. In the case of an error that looks like
+"Error: The world has ended. Deity intervention required. Shutting down.", it
+is clear that whatever is producing the log you are scanning has reached an
+unrecoverable error. When check_log_content makes its pass over the log and
+detects this error it will detect the error and report it up to Nagios. The
+service state for the log check at this point will be CRITICAL and Nagios will
+dutifully notify the appropriate deit(y|ies). The important this to remember
+is that when the log check runs again in 1 (or 3 or 5) minute(s) it will be
+scanning from the last place the check read. In this case, there was a fatal
+error and the log likely won't be updated again...so there are no log entries
+to raise errors during this pass...so the check will return OK since no errors
+were found during THIS PASS ONLY.
+
+    Due to the situation above, any service based on check_log_content MUST
+have max_check_attempts set to 1. Without max_check_attempts set to 1, Nagios
+will only send alerts if the check has found log errors consistently during
+the last max_check_attempts executions.
+
+    Set notification_options to exclude the 'r' option for any service based on
+check_log_content. check_log_content only shows the state of the log since the
+last execution, therefore the concept of "recovery" for a service that is
+constantly in a transient state is extremely confusing and leads to a false
+sense of security. When integrating workflow engines with monitoring, recovery
+notifications tend to confuse the state engine into thinking the problem is no
+longer outstanding.
+
+    check_log_content will typically be executed via NRPE / check_nrpe so that
+log parsing is executed local to the host that contains the actual log files.
+This is far more efficient than shipping/syncing the logs to a nagios poller
+and scanning on the monitoring host.
+
